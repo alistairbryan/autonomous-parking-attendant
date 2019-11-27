@@ -17,7 +17,6 @@ from sensor_msgs.msg import Image
 from time import sleep
 #GET Q VALUE FOR STATE
 
-
 def getQ(self, state, action):
 	return self.q.get((state, action), 0.0)		
 
@@ -38,36 +37,45 @@ def getState(self, data):
 	y = imageUn.shape[1]
 	sec = x/10
 	#CHECK FOR CROSSWALK RED
-	crossPx = cv.countNonZero(cv.inRange(cv.cvtColor(im,cv.COLOR_BGR2HSV), self.lower_red,self.upper_red ))
-	if (crossPx > 10):
-		if self.notCrossWalk == 0: #if we have seen crosswalk
+	crossPx = cv.countNonZero(cv.inRange(cv.cvtColor(imageUn,cv.COLOR_BGR2HSV), self.lower_red,self.upper_red ))
+	if (crossPx > 0):
+		if self.crossWalk == 0 and self.notCrossWalk == 0:
+			self.endCross = 1
+		elif self.notCrossWalk == 0: #if we have seen crosswalk
 			if self.crossWalk == 1:  
 				self.crossWalk = 0
 				self.notCrossWalk = 1
+				#self.StraightTime = False
 			else:
 				self.crossWalk = 1
 	else:
 		if self.notCrossWalk == 1:
 			self.notCrossWalk = 0
-	#if self.crossWalk == 1:
-		#SET STATES
+		elif self.endCross == 1:
+			if self.notCrossWalk == 1:
+				self.notCrossWalk = 0
+			elif self.notCrossWalk == 0:
+				self.crossWalk = 1
+				self.endCross = 0
+	#SET STATES
 	for i in range(0,9):
 		section = imageUn[0:y, sec*i:sec*(i + 1)]
-
+		crossPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_red,self.upper_red ))
 		#ROAD
-		roadPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_road,self.upper_road ))
+		roadPx = crossPx + cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_road,self.upper_road ))
 		#EVERYTHING THAT ISN'T ROAD
 		carPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_car,self.upper_car ))
 		grassPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_grass,self.upper_grass ))
-		whitePx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_white,self.upper_white ))*self.crossWalk
-		notRoadPx = 0.8*float(carPx + grassPx + whitePx*(self.crossWalk))
+		whitePx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_white,self.upper_white ))
+		notRoadPx = 0.5*float(carPx + grassPx + whitePx*(self.crossWalk))
+		if(self.crossWalk == 0 or self.endCross==1):
+			roadPx += whitePx
 		if carPx > 10: #CAR IN COLUMN: 2
 			state[i] = 2
 		elif roadPx < notRoadPx: #NOT ROAD: 0
 			state[i] = 0
 		else: #ROAD : 1
 			state[i] = 1
-
 	return state
 
 
@@ -77,6 +85,7 @@ class Drive(gazebo_env.GazeboEnv):
 
 	def __init__(self):
 		print("Started")
+		self. pauseSub = rospy.Subscriber('/drive', String, self.callback)
 		self.imSub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
 		self.vel_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.unpause = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)	
@@ -95,47 +104,68 @@ class Drive(gazebo_env.GazeboEnv):
 		self.lower_road = np.array([0,0, 60])
 		self.upper_road = np.array([0, 0, 90])
 		self.i = 0
-		self.startingTurn = [0,0, 0,0,1,1,1,1,1,1]
-
+		self.justStarted = True
+		self.straightTime = False
+		self.wait = 0
 		self.action_space = spaces.Discrete(3)  # F,L,R
 		self.actions =  range(self.action_space.n)
 
+		self.endCross = 0
 		self.crossWalk = 1
 		self.notCrossWalk = 0
-
+		self.done = True
 
 		self.q ={}
 		with open("/home/chloe/QValues") as f: self.q = pickle.load(f)
 
 
-	def callback(self, data):
-				
-		if self.i > len(self.startingTurn)-1:
-			#the sate determined from camera 
-			stateVal = getState(self, data)
-			state = ''.join(map(str, stateVal))
-			#for i in range(0, 2):
-				#getQ(self, state, a)
-			q = [getQ(self, state, a) for a in self.actions]
-			maxQ = max(q)
+	def callback(self, data, cwSignal):
+		vel_cmd = Twist()
+		if self.justStarted==True:
+		sleep(1)
+			self.justStarted=False
+			vel_cmd.linear.x =1.0
+			vel_cmd.angular.z =0.0
+			self.vel_pub.publish(vel_cmd)
+			sleep(1.4)
+			vel_cmd.linear.x =0.0
+			vel_cmd.angular.z =0.3
+			self.vel_pub.publish(vel_cmd)
+			sleep(0.85)
+			vel_cmd.linear.x = 0.0
+			vel_cmd.angular.z =0.0
+			self.vel_pub.publish(vel_cmd)
 
-			#If more than one Q
-			count = q.count(maxQ)
-			if count > 1:
-				best = [i for i in range(len(self.actions)) if q[i] == maxQ]
-				i = random.choice(best)
+
+		if(cwSignal == "Go"):
+			if self.i > len(self.startingTurn)-1:
+				if self.done:
+					#the sate determined from camera 
+					stateVal = getState(self, data)
+					state = ''.join(map(str, stateVal))
+					#for i in range(0, 2):
+						#getQ(self, state, a)
+					q = [getQ(self, state, a) for a in self.actions]
+					maxQ = max(q)
+
+					#If more than one Q
+					count = q.count(maxQ)
+					if count > 1:
+						best = [i for i in range(len(self.actions)) if q[i] == maxQ]
+						i = random.choice(best)
+					else:
+						i = q.index(maxQ)
+					action = self.actions[i]
+
 			else:
-				i = q.index(maxQ)
-			action = self.actions[i]
+				action = self.startingTurn[self.i]
+				self.i +=1
+		elif cwSignal == "Stop":
+			action = -1
 
-
-		else:
-			action = self.startingTurn[self.i]
-			print(action)
-			self.i +=1
 
 		#WRITE COMMAND
-		vel_cmd = Twist()
+		#vel_cmd = Twist()
 		if action == 0:  # FORWARD
 			vel_cmd.linear.x = 1
 			vel_cmd.angular.z = 0.0
@@ -145,6 +175,10 @@ class Drive(gazebo_env.GazeboEnv):
 		elif action == 2:  # RIGHT
 			vel_cmd.linear.x = 0.0
 			vel_cmd.angular.z = -0.3
+		elif action == -1: #STOP
+			vel_cmd.linear.x = 0.0
+			vel_cmd.angular.z = 0	
+		
 		self.vel_pub.publish(vel_cmd)		
 
 
