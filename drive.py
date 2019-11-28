@@ -3,7 +3,8 @@ import random
 import pickle
 import cv2 as cv
 import math
-import rospy
+import rospy 
+from rospy import sleep
 import roslaunch
 import time
 import numpy as np
@@ -14,7 +15,8 @@ from geometry_msgs.msg import Twist
 from std_srvs.srv import Empty
 import subprocess
 from sensor_msgs.msg import Image
-from time import sleep
+import time
+from std_msgs.msg import String
 #GET Q VALUE FOR STATE
 
 def getQ(self, state, action):
@@ -67,7 +69,7 @@ def getState(self, data):
 		carPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_car,self.upper_car ))
 		grassPx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_grass,self.upper_grass ))
 		whitePx = cv.countNonZero(cv.inRange(cv.cvtColor(section,cv.COLOR_BGR2HSV), self.lower_white,self.upper_white ))
-		notRoadPx = 0.5*float(carPx + grassPx + whitePx*(self.crossWalk))
+		notRoadPx = 0.6*float(carPx + grassPx + whitePx*(self.crossWalk))
 		if(self.crossWalk == 0 or self.endCross==1):
 			roadPx += whitePx
 		if carPx > 10: #CAR IN COLUMN: 2
@@ -84,8 +86,7 @@ class Drive(gazebo_env.GazeboEnv):
 	#LOAD Q VALUES
 
 	def __init__(self):
-		print("Started")
-		self. pauseSub = rospy.Subscriber('/drive', String, self.callback)
+		self.pauseSub = rospy.Subscriber('/drive', String, self.callback0)
 		self.imSub = rospy.Subscriber('/R1/pi_camera/image_raw', Image, self.callback)
 		self.vel_pub = rospy.Publisher('/R1/cmd_vel', Twist, queue_size=1)
 		self.unpause = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)	
@@ -106,61 +107,71 @@ class Drive(gazebo_env.GazeboEnv):
 		self.i = 0
 		self.justStarted = True
 		self.straightTime = False
-		self.wait = 0
+		self.set_data =None
+		self.wait = String
 		self.action_space = spaces.Discrete(3)  # F,L,R
 		self.actions =  range(self.action_space.n)
-
+		self.set = True 
 		self.endCross = 0
 		self.crossWalk = 1
 		self.notCrossWalk = 0
 		self.done = True
+		self.cwSignal = "Go"
 
 		self.q ={}
-		with open("/home/chloe/QValues") as f: self.q = pickle.load(f)
+		with open("/home/fizzer/QValues") as f: self.q = pickle.load(f)
 
 
-	def callback(self, data, cwSignal):
+	def callback0(self, data):
+		if self.set:
+			self.set_data= data
+			self.set = True
+		self.cwSignal = data
+
+	def callback(self, data): #callback(self, data, cwSignal):
+		action = 0
 		vel_cmd = Twist()
-		if self.justStarted==True:
-		sleep(1)
-			self.justStarted=False
-			vel_cmd.linear.x =1.0
-			vel_cmd.angular.z =0.0
-			self.vel_pub.publish(vel_cmd)
-			sleep(1.4)
-			vel_cmd.linear.x =0.0
-			vel_cmd.angular.z =0.3
-			self.vel_pub.publish(vel_cmd)
-			sleep(0.85)
+		if self.justStarted == True:
+			sleep(1)
+			self.justStarted = False	
+
+			vel_cmd.linear.x = 1.0
+			vel_cmd.angular.z = 0.0
+			self.vel_pub.publish(vel_cmd)	
+			sleep(1.4 * 0.7)
+
 			vel_cmd.linear.x = 0.0
-			vel_cmd.angular.z =0.0
+			vel_cmd.angular.z = 0.3
+			self.vel_pub.publish(vel_cmd)
+			sleep(0.85 * 0.7)
+
+			vel_cmd.linear.x = 0.0
+			vel_cmd.angular.z = 0.0
 			self.vel_pub.publish(vel_cmd)
 
+		if(self.cwSignal == self.set_data):
+			if self.done:
+				#the sate determined from camera 
+				stateVal = getState(self, data)
+				state = ''.join(map(str, stateVal))
+				#for i in range(0, 2):
+					#getQ(self, state, a)
+				q = [getQ(self, state, a) for a in self.actions]
+				maxQ = max(q)
 
-		if(cwSignal == "Go"):
-			if self.i > len(self.startingTurn)-1:
-				if self.done:
-					#the sate determined from camera 
-					stateVal = getState(self, data)
-					state = ''.join(map(str, stateVal))
-					#for i in range(0, 2):
-						#getQ(self, state, a)
-					q = [getQ(self, state, a) for a in self.actions]
-					maxQ = max(q)
-
-					#If more than one Q
-					count = q.count(maxQ)
-					if count > 1:
-						best = [i for i in range(len(self.actions)) if q[i] == maxQ]
-						i = random.choice(best)
-					else:
-						i = q.index(maxQ)
-					action = self.actions[i]
+				#If more than one Q
+				count = q.count(maxQ)
+				if count > 1:
+					best = [i for i in range(len(self.actions)) if q[i] == maxQ]
+					i = random.choice(best)
+				else:
+					i = q.index(maxQ)
+				action = self.actions[i]
 
 			else:
 				action = self.startingTurn[self.i]
 				self.i +=1
-		elif cwSignal == "Stop":
+		else:
 			action = -1
 
 
@@ -178,7 +189,6 @@ class Drive(gazebo_env.GazeboEnv):
 		elif action == -1: #STOP
 			vel_cmd.linear.x = 0.0
 			vel_cmd.angular.z = 0	
-		
 		self.vel_pub.publish(vel_cmd)		
 
 
