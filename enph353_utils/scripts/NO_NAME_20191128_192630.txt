@@ -1,0 +1,10 @@
+19:26:30.276: Position 1: BY94
+19:26:30.276: Position 2: GC76
+19:26:30.277: Position 3: HO37
+19:26:30.279: Position 4: MQ34
+19:26:30.280: Position 5: FI35
+19:26:30.280: Position 6: ON02
+19:26:30.281: Position 7: AE57
+19:26:30.281: Position 8: LO15
+19:26:36.823: First command velocity received.
+19:26:40.149: Message received: teamAwesome,p@55w04d,0,AA00

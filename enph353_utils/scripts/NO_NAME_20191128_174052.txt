@@ -1,0 +1,25 @@
+17:40:52.946: Position 1: MG46
+17:40:52.946: Position 2: YW24
+17:40:52.947: Position 3: SY99
+17:40:52.947: Position 4: YA39
+17:40:52.948: Position 5: LI10
+17:40:52.948: Position 6: QP21
+17:40:52.948: Position 7: FU88
+17:40:52.949: Position 8: SR49
+17:41:17.980: First command velocity received.
+17:41:20.541: Message received: teamAwesome,p@55w04d,LLLL,1
+17:41:20.542: Plate location is not a number.
+17:41:21.697: Message received: teamAwesome,p@55w04d,LLLL,L
+17:41:21.698: Plate location is not a number.
+17:41:24.555: Message received: teamAwesome,p@55w04d,HLL7,L
+17:41:24.556: Plate location is not a number.
+17:41:25.091: Message received: teamAwesome,p@55w04d,LTLL,L
+17:41:25.093: Plate location is not a number.
+17:41:28.094: Message received: teamAwesome,p@55w04d,H987,4
+17:41:28.096: Plate location is not a number.
+17:41:28.431: Message received: teamAwesome,p@55w04d,SY97,2
+17:41:28.432: Plate location is not a number.
+17:41:28.948: Message received: teamAwesome,p@55w04d,HH8P,2
+17:41:28.950: Plate location is not a number.
+17:41:31.289: Message received: teamAwesome,p@55w04d,LTL7,1
+17:41:31.290: Plate location is not a number.

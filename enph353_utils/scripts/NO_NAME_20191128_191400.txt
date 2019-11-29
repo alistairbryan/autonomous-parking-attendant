@@ -1,0 +1,10 @@
+19:14:00.685: Position 1: FM90
+19:14:00.686: Position 2: MW25
+19:14:00.686: Position 3: YI68
+19:14:00.686: Position 4: AW71
+19:14:00.686: Position 5: HA91
+19:14:00.687: Position 6: PV49
+19:14:00.687: Position 7: XY54
+19:14:00.688: Position 8: SK06
+19:14:10.864: First command velocity received.
+19:14:13.802: Message received: teamAwesome,p@55w04d,0,AA00

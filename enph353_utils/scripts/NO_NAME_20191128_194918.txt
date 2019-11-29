@@ -1,0 +1,13 @@
+19:49:18.222: Position 1: FW75
+19:49:18.226: Position 2: RF09
+19:49:18.227: Position 3: PD75
+19:49:18.229: Position 4: RG30
+19:49:18.229: Position 5: UR42
+19:49:18.230: Position 6: HG23
+19:49:18.231: Position 7: BW16
+19:49:18.232: Position 8: HU03
+19:49:30.619: First command velocity received.
+19:49:32.609: Timer started.
+19:49:44.498: Timer started.
+19:49:44.720: Timer started.
+19:50:11.775: Message received: teamAwesome,p@55w04d,0,AA00

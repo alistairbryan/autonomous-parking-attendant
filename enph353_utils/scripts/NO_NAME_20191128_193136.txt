@@ -1,0 +1,11 @@
+19:31:36.206: Position 1: SO23
+19:31:36.207: Position 2: WV89
+19:31:36.207: Position 3: JZ13
+19:31:36.235: Position 4: KG84
+19:31:36.238: Position 5: TJ29
+19:31:36.238: Position 6: KT00
+19:31:36.238: Position 7: XG26
+19:31:36.239: Position 8: XB10
+19:31:40.955: Timer started.
+19:31:46.065: First command velocity received.
+19:31:50.894: Message received: teamAwesome,p@55w04d,0,AA00

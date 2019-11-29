@@ -1,0 +1,11 @@
+19:21:02.182: Position 1: FE06
+19:21:02.208: Position 2: OD90
+19:21:02.208: Position 3: FK23
+19:21:02.210: Position 4: BU93
+19:21:02.210: Position 5: FR55
+19:21:02.211: Position 6: AO43
+19:21:02.212: Position 7: AQ00
+19:21:02.212: Position 8: RZ63
+19:21:14.919: First command velocity received.
+19:21:15.019: Timer started.
+19:21:18.758: Message received: teamAwesome,p@55w04d,0,AA00
