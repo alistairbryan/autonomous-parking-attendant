@@ -94,6 +94,7 @@ SECOND_OFFSET = -103
 THIRD_OFFSET = 98
 FOURTH_OFFSET = 197
 
+# Global values to allow storing of brown mask. Used in pedestrian detection.
 prev_mask_assigned = False
 previous_brown_mask = None
 
@@ -124,13 +125,16 @@ class image_processor:
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber(
             "/R1/pi_camera/image_raw", Image, self.callback)        #print(license_count)
-        #print("-----")
+
         self.teamID = teamID
         self.password = password
+
         # Stores string to publish and corresponding confidence array
         self.license_collection = [[self.teamID + ',' + self.password + ',' + '1,AA00', 0], [self.teamID + ',' + self.password + ',' + '2,AA00', 0], \
             [self.teamID + ',' + self.password + ',' + '3,AA00', 0], [self.teamID + ',' + self.password + ',' + '4,AA00', 0], \
                 [self.teamID + ',' + self.password + ',' + '5,AA00', 0], [self.teamID + ',' + self.password + ',' + '6,AA00', 0]]
+        
+        # Set start_time (also set in callback, as this step is unreliable)
         self.start_time = rospy.get_time()
         self.license_pub.publish(self.teamID + ',' + self.password + ',' + 'AA00,0') 
         self.run_time = 210
@@ -141,23 +145,23 @@ class image_processor:
         global previous_brown_mask
         global stop, starting, set_time
 
+        # Set start time.
         if set_time == False:
             self.start_time = rospy.get_time()
             set_time = True
-            self.license_pub.publish(self.teamID + ',' + self.password + ',' + '0,AA00') 
-            print(np.asarray(self.license_collection).shape)
             print("Start time:")
             print(self.start_time)
+
+            # Publish initialization message to score tracker
+            self.license_pub.publish(self.teamID + ',' + self.password + ',' + '0,AA00') 
 
         try:
             image = self.bridge.imgmsg_to_cv2(data, "bgr8")
         except CvBridgeError as e:
             print(e)
 
-        cv2.waitKey(2)
-
-        # Publish after self.run_time seconds
-        if rospy.get_time() - self.start_time > 210:
+        # Publish after 210 seconds
+        if rospy.get_time() - self.start_time > self.run_time:
             print('publishing')
             for plate in self.license_collection:
                 self.license_pub.publish(plate[0]) 
@@ -195,67 +199,58 @@ class image_processor:
 		drive_to_publish = "Go"
 
         # Publish stop boolean to drive node
-        print(drive_to_publish)
         self.driver_pub.publish(drive_to_publish)
 
         # If just starting up from crosswalk, sleep to prevent double counting of crosswalk
         if starting == True:
             starting = False
             time.sleep(5)
-
+        
+        # If sufficient number of blue pixels detected, start searching for plate!
         if(license_count > lower_license_threshold and license_count < upper_license_threshold):
+            
+            # Search image for plate extrema
             delta, pts = search_image(white_mask, license_bottom_left, license_top_right)
 
+            # Generate normal projection of license plate
             projection = four_point_transform(image, np.asarray(pts))
-            #cv2.imshow("Projection", projection)
+            
             j = 0
             
             cropped = []
 
+            # Crop plate into individual characters, resize them, and grayscale.
             while j < 4:
                 gray_char = cv2.cvtColor(crop(projection, j), cv2.COLOR_BGR2GRAY) / 255.0
                 resized = cv2.resize(gray_char, dsize=(128, 128), interpolation=cv2.INTER_CUBIC)
                 cropped.append(resized)
-                #cv2.imshow(str(j), cropped[j])
                 j += 1
 
-            #cv2.imshow("Counted_black", image[pts[0][1] - int(delta / 2):pts[0][1], pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]])
+            # Using determined location of license plate, crop out corresponding number.
             parking_image = image[pts[0][1] - int(delta / 2.4):pts[0][1] - 5, pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]]
+            # Resize, grayscale, and blur for interpretation by neural net
             resized_parking = cv2.resize(parking_image, dsize=(128, 128), interpolation=cv2.INTER_CUBIC)
             gray_parking = cv2.cvtColor(resized_parking, cv2.COLOR_BGR2GRAY) / 255.0
             blurred_gray_parking = cv2.blur(gray_parking, (9,9))
 
-
+            # Add parking number to array to be passed into neural net
             cropped.append(blurred_gray_parking)
 
+            # Get license characters as a string, and the confidence of the lowest confidence character
             license_characters, confidence = process_license(np.asarray(cropped))
 
-            # #Format license characters and publish to ROS Master
+            # Format license characters for publishing to ROS Master
             # #Example: 'TeamRed,multi21,4,XR58'
 
             plate_to_publish = self.teamID + ',' + self.password + ',' + license_characters
 
+            # If confidence in characters greater than any other reading for that license number, save it for publishing.
             if self.license_collection[int(license_characters[0])-1][1] < confidence:
 
-                # Need to throw an exception if there is a string where a character should be.
-                # print(license_characters[4])
-                # print(license_characters[5])
-                # int(license_characters[4])
-                # int(license_characters[5])
-
-                # print("Replacing:")
-                # #print(int(license_characters[-1])-1)
-                # print(self.license_collection[int(license_characters[-1])-1][0])
-                # print("With")
-                # print(plate_to_publish)
                 self.license_collection[int(license_characters[0])-1][0] = plate_to_publish
                 self.license_collection[int(license_characters[0])-1][1] = confidence
 
-
-        #cv2.imshow("image", image)
-        #cv2.imshow("Subtracted Mask", brown_mask - previous_brown_mask)
-        cv2.waitKey(2)
-
+        # Update brown mask for pedestrian tracking
         previous_brown_mask = brown_mask
 
 # Filters image for red, white, grey, and blue.
@@ -263,8 +258,6 @@ class image_processor:
 # Returns: An array of images in OpenCV binary format, each corresponding to masks filtering for a different colour.
 #          Returned array is in the form [red_mask, white_mask, grey_mask, blue_mask]
 def get_masks(image):
-
-    global lower_brown, upper_brown, lower_white, upper_white, lower_grey, upper_grey, lower_blue, upper_blue
 
     # Convert image to HSV format
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -276,40 +269,39 @@ def get_masks(image):
     blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
     black_mask = cv2.inRange(hsv, lower_black, upper_black)
 
-    # # Check masks (Debugging step)
-    #cv2.imshow("black_mask", black_mask[black_top_right[1]:black_bottom_left[1], black_bottom_left[0]:black_top_right[0]])
-    #cv2.imshow("white_mask", white_mask[blue_top_right[1]:blue_bottom_left[1], blue_bottom_left[0]:blue_top_right[0]])
-    # cv2.imshow("grey_mask", grey_mask)
-    #cv2.imshow("blue_mask", blue_mask[blue_top_right[1]:blue_bottom_left[1], blue_bottom_left[0]:blue_top_right[0]])
-    #cv2.imshow("white_mask", white_mask[300:600, 50:450])
-    #cv2.imshow("Red Mask", red_mask)
-    #cv2.imshow("Bounded Red Mask", red_mask[red_top_right[1]:red_bottom_left[1], red_bottom_left[0]:red_top_right[0]])
-    #cv2.imshow("Brown Mask", brown_mask)
-    cv2.waitKey(2)
-
     # Return masks 
     return brown_mask, white_mask, red_mask, blue_mask, black_mask
     
-# Iterates through region of a binary mask image, counting the number of high pixels.
+# Iterates through white mask, finding license plate corners and the distance between the top of 
+# the white block and the license plate. 
 # Parameter: mask - 2D numpy array - a binary mask of image that you wish to search
 # Parameter: bottom_left - int - (x, y) coordinates corresponding to the bottom
 #            left corner of the desired rectangular search region
 # Parameter: top_right - int - Same as above, but for top right corner
-# Returns: pixel_count - int - number of pixels detected
-# Returns: pts - 2D array of ints - array of 4 (x,y) pts corresponding to the extrema of the detected image.
+# Returns: delta - int - number of pixels vertically seperating top 
+#          lefthand corner of white block and the plate's top lefthand corner
+# Returns: pts - 2D array of ints - array of 4 (x,y) pts corresponding to the extrema of the license plate.
 def search_image(mask, bottom_left, top_right):
     # Declare variables to store extrema
+
+    # Coordinate of smallest x value corresponding to a white region in the mask
     smallest_x = IMAGE_DIMENSIONS[0]
     y_of_smallest_x = 0
 
     pixel_count = 0
 
+    # Coordinate believed to be smallest_x at any step during the search.
     saved_smallest_x = 0
     saved_y_of_smallest_x = 0
 
+    # Number of consecutive pixels that have been non-zero.
     nonzero_streak = 0
-    
+    zero_streak = 0
+
+    # Rate at which x and y values are increased during the search
     step = 1
+
+    # ICs for my x,y search. Start x slightly right of mask edge for noise purposes
     y = top_right[1]
     x = bottom_left[0] + int((top_right[0] - bottom_left[0]) / 6.0)
 
@@ -349,38 +341,52 @@ def search_image(mask, bottom_left, top_right):
             y += step
         x += step
 
-    #return pixel_count, [smallest_x, y_of_smallest_x]
-    
+    # We've found smallest_x. Now, use edges of block to find corners of license plates
     x = smallest_x
     y = y_of_smallest_x
 
-    zero_streak = 0
-
-    # Finds top right corner of large white block
-
+    
+    # About to find this. Describes the vertical distance in pixels between the
+    # top lefthand corner of the block and the plate
     delta = 0
 
+    # # Finds top right corner of large white block
+
+    # White mask has pixel values of 0 passed the block, so we
+    # increas x incrementally until we no longer read pixels with value 1.
+    # Only break after 10 consecutive zeroes to account for noise at edges
     while zero_streak < 10:
+        # Cannot iterate past image edge
         if x >= mask.shape[1]:
             break
-
+        
+        # Check if current pixel = 0. Update streak accordinging  
         if mask[y, x] == 0:
             zero_streak += 1
         else:
+            # Streak over. Reset
             zero_streak = 0
+        # Iterate indices
         x += 1
         delta += 1
     
+    # Found top righthand of block
+    # Offset x coord to account for overshooting
     block_top_right_x = x - 10
     block_top_right_y = y
 
+    # Reset to top lefthand corner of block.
     x = smallest_x
     y = y_of_smallest_x
 
+    # Reset to prepare for another search
     zero_streak = 0
 
-    # Find top righthand corner of license
+    # # Find top righthand corner of license
 
+    # White mask has pixel values of 0 at license plate, so we
+    # decrease y incrementally until we no longer read pixels with value 1.
+    # Only break after 10 consecutive zeroes to account for noise at edges.
     while zero_streak < 10:
         if y >= mask.shape[0]:
             break
@@ -391,84 +397,85 @@ def search_image(mask, bottom_left, top_right):
             zero_streak = 0
         y += 1
 
+    # Coordinates of top left license corner
     corner1_x = x
+    # Offset y to account for overshooting.
     corner1_y = y - 10
+
+    # Reset nonzero_streak to prepare for another search
     nonzero_streak = 0
 
     # Find bottom righthand corner of license
 
     while nonzero_streak < 10:
+        # Cannot iterate past image edge
         if y > 719:
             break
+
+        # Check if current pixel != 0. Update streak accordinging 
         if mask[y, x] != 0:
             nonzero_streak += 1
         else:
+            # Streak over. Reset
             nonzero_streak = 0
+        # Iterate index
         y += 1
     
+    # Coordinates of bottom left license corner
     corner2_x = x
+    # Offset y to account for overshooting.
     corner2_y = y - 10
     
+    # Jump back up to top right of block
+    # Offset x to reduce edge noise
     x = block_top_right_x - 5
     y = block_top_right_y
+
+    # Reset streak to prepare for another search
     zero_streak = 0
 
     while zero_streak < 10:
+        # Check if current pixel = 0. Update streak accordinging 
         if mask[y, x] == 0:
             zero_streak += 1
         else:
+            # Streak over. Reset.
             zero_streak = 0
         y += 1
+        # Cannot iterate past image edge
         if y == IMAGE_DIMENSIONS[1]:
             break
     
+    # Coordinates of top right license corner
     corner3_x = block_top_right_x
     corner3_y = y - 10
 
+    # Reset to prepare for search
     nonzero_streak = 0
 
+    # Find bottom right corner of license 
     while nonzero_streak < 10:
+        # Cannot iterate past image edge
         if y > 719:
             break
+        
+        # Check if current pixel != 0. Update streak accordinging 
         if mask[y, x] != 0:
             nonzero_streak += 1
         else:
+            # Streak over. Reset.
             nonzero_streak = 0
+        # Iterate index
         y += 1
     
+    # Coordinates of bottom right license corner
     corner4_x = x + 5
     corner4_y = y - 10
-    # Generate array of points describing extrema of license plate.
-    #pts = [[smallest_x, y_of_smallest_x], [largest_x, y_of_largest_x], [x_of_smallest_y, smallest_y], [x_of_largest_y, largest_y]]
-
-    # Return corners of white region
+    
+    # Collect corners of license plate as a list.
     pts = [[corner1_x, corner1_y], [corner2_x, corner2_y], [corner3_x, corner3_y], [corner4_x, corner4_y]]
 
     return delta, pts
-
-# Filters through masks to search for different obstacles.
-# Sets booleans describing their presence.
-def get_environment_state(red_mask, grey_mask, white_mask):
-    global previous_white_mask
-    global red_bottom_left, red_top_right, grey_bottom_left, grey_top_right, pedestrian_bottom_left, pedestrian_top_right
-    global red_threshold, grey_threshold
-    
-    # Generate image with non-zero values only for pixels that changed from previous frame
-    delta_white_mask = np.subtract(white_mask, previous_white_mask)
-
-    # Get number of high pixels from each mask
-    crosswalk_pixel_count, _ = search_image(red_mask, red_bottom_left, red_top_right)
-    car_pixel_count, _ = search_image(grey_mask, grey_bottom_left, grey_top_right)
-    pedestrian_pixel_count, _ = search_image(delta_white_mask, pedestrian_bottom_left, pedestrian_top_right)
-
-    # Compare number of pixels with pre-determined thresholds to set booleans describing presence of sought object.
-    crosswalk_in_image = crosswalk_pixel_count >= red_threshold
-    car_in_image = car_pixel_count >= grey_threshold
-
-    # If some pixels are non-zero, pedestrian has moved. If all are zero, pedestrian has stopped, and our robot is good to drive.
-    pedestrian_in_crosswalk =  pedestrian_pixel_count != pedestrian_threshold
-
-    return crosswalk_in_image, car_in_image, pedestrian_in_crosswalk
 
 # Recognize and return the license plate characters once license plate flagged in an image.
 def process_license(character_images):
@@ -492,31 +499,26 @@ def process_license(character_images):
         plate_as_chars.append(class_names[np.argmax(predictions[i])])
         i += 1
     
-    # Remove array corresponding to confidence in parking number.
-    print(confidence)
+    # Find confidence of character we are least confident in
 
     min_confidence = np.amin(confidence)
-
-    # Find minimum confidence for plate characters
-    # j = 0
-
-    # while j < 4:
-    #     this_min = np.argmin(confidence[j])
-    #     if this_min < min_confidence:
-    #         min_confidence = this_min
-    #     j+= 1
-
-    print(min_confidence)
     
     # # Correct potential bad values
-    # No Ts in second half of license plate. These are a 7.
-    if plate_as_chars[2] == 'T':
-        plate_as_chars[2] = '7'
-        print("Corrected T -> 7 at i=2")
+    corrected_characters = correct_character_values(plate_as_chars)
 
-    if plate_as_chars[3] == 'T':
-        plate_as_chars[3] = '7'
-        print("Corrected T -> 7 at i=3")
+    # Return as single string describing license plate
+    return corrected_characters[-1] + ',' + ''.join(corrected_characters[0:4]), min_confidence
+
+# State machine to correct consistent errors by Neural Net
+def correct_character_values(plate_as_chars):
+    # Noting that indices 0,1 cannot contain numbers
+    if plate_as_chars[0] == '1':
+        plate_as_chars[0] = 'I'
+        print("Corrected 1 -> I at i=0")
+
+    if plate_as_chars[1] == '1':
+        plate_as_chars[1] = 'I'
+        print("Corrected 1 -> I at i=1")
 
     if plate_as_chars[0] == '2':
         plate_as_chars[0] = 'Z'
@@ -525,6 +527,40 @@ def process_license(character_images):
     if plate_as_chars[1] == '2':
         plate_as_chars[1] = 'Z'
         print("Corrected 2 -> Z at i=1")
+
+    if plate_as_chars[0] == '8':
+        plate_as_chars[0] = 'B'
+        print("Corrected 8 -> B at i=0")
+
+    if plate_as_chars[1] == '8':
+        plate_as_chars[1] = 'B'
+        print("Corrected 8 -> B at i=1")
+
+    if plate_as_chars[1] == '2':
+        plate_as_chars[1] = 'Z'
+        print("Corrected 2 -> Z at i=1")
+
+    # Noting that indices 2,3 cannot contain numbers
+
+    if plate_as_chars[2] == 'T':
+        plate_as_chars[2] = '7'
+        print("Corrected T -> 7 at i=2")
+
+    if plate_as_chars[3] == 'T':
+        plate_as_chars[3] = '7'
+        print("Corrected T -> 7 at i=3")
+
+    if plate_as_chars[2] == 'B':
+        plate_as_chars[2] = '8'
+        print("Corrected B -> 8 at i=2")
+
+    if plate_as_chars[3] == 'B':
+        plate_as_chars[3] = '8'
+        print("Corrected B -> 8 at i=3")
+
+    if plate_as_chars[3] == 'T':
+        plate_as_chars[3] = '7'
+        print("Corrected T -> 7 at i=3")
 
     if plate_as_chars[2] == 'H':
         plate_as_chars[2] = '8'
@@ -549,14 +585,8 @@ def process_license(character_images):
     if plate_as_chars[3] == 'I':
         plate_as_chars[3] = '1'
         print("Corrected I -> 1 at i=3")
-    
-    if plate_as_chars[0] == '1':
-        plate_as_chars[0] = 'I'
-        print("Corrected 1 -> I at i=0")
 
-    if plate_as_chars[1] == '1':
-        plate_as_chars[1] = 'I'
-        print("Corrected 1 -> I at i=1")
+    # Correcting parking numbers
 
     if plate_as_chars[-1] == '0':
         plate_as_chars.append('6')
@@ -570,8 +600,7 @@ def process_license(character_images):
         plate_as_chars[-1].append('2')
         print('Made correction Z -> 2')
 
-    # Return as single string describing license plate
-    return plate_as_chars[-1] + ',' + ''.join(plate_as_chars[0:4]), min_confidence
+    return plate_as_chars
         
 # Orders points so that they can be interpreted by our image transform function.
 def order_points(pts):
@@ -691,19 +720,6 @@ def crop(img, charNum):
     starty = int(y//2-(cropy//2) + yOffset)
 
     return img[starty:starty+cropy,startx:startx+cropx]
-
-# Given a normal projection of the license plate, returns an array of images of its 
-# individual characters
-def get_license_character_images(image):
-    character_images = []
-
-    # Arbritary index
-    i = 0
-    # Loop through all 4 characters in license plate
-    while i < 4:
-        character_images.append(crop(image, i))
-    
-    return character_images
 
 def main(args):
     rospy.init_node('image_processor', anonymous=True)
