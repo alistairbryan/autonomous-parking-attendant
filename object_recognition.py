@@ -79,7 +79,7 @@ black_top_right = [350, 400]
 red_threshold = 500000
 pedestrian_threshold = 70000
 lower_license_threshold = 2500000
-upper_license_threshold = 8000000
+upper_license_threshold = 9000000
 # Grey value set like this for now to prevent triggering
 grey_threshold = 2000000
 blue_threshold = 1000
@@ -110,6 +110,7 @@ class_names = nums + list(string.ascii_uppercase)
 
 stop = False
 starting = False
+set_time = False
 
 class image_processor:
 
@@ -126,23 +127,41 @@ class image_processor:
         #print("-----")
         self.teamID = teamID
         self.password = password
+        # Stores string to publish and corresponding confidence array
+        self.license_collection = [[self.teamID + ',' + self.password + ',' + '1,AA00', 0], [self.teamID + ',' + self.password + ',' + '2,AA00', 0], \
+            [self.teamID + ',' + self.password + ',' + '3,AA00', 0], [self.teamID + ',' + self.password + ',' + '4,AA00', 0], \
+                [self.teamID + ',' + self.password + ',' + '5,AA00', 0], [self.teamID + ',' + self.password + ',' + '6,AA00', 0]]
+        self.start_time = rospy.get_time()
+        self.license_pub.publish(self.teamID + ',' + self.password + ',' + 'AA00,0') 
+        self.run_time = 210
 
 
     def callback(self, data):
         global prev_mask_assigned
         global previous_brown_mask
-        global stop, starting
+        global stop, starting, set_time
+
+        if set_time == False:
+            self.start_time = rospy.get_time()
+            set_time = True
+            self.license_pub.publish(self.teamID + ',' + self.password + ',' + '0,AA00') 
+            print(np.asarray(self.license_collection).shape)
+            print("Start time:")
+            print(self.start_time)
 
         try:
             image = self.bridge.imgmsg_to_cv2(data, "bgr8")
         except CvBridgeError as e:
             print(e)
-        # cv2.imshow("image", image)
-        # cv2.imshow("cropped image", image[300:600, 50:450])
-        # cv2.waitKey(2)
 
-        # TODO: figure out license plate ID is and how to get it.
-        license_plate_id = str(0)
+        cv2.waitKey(2)
+
+        # Publish after self.run_time seconds
+        if rospy.get_time() - self.start_time > 210:
+            print('publishing')
+            for plate in self.license_collection:
+                self.license_pub.publish(plate[0]) 
+
 
         # Generate array of masks for each desired colour
         brown_mask, white_mask, red_mask, blue_mask, black_mask = get_masks(image)
@@ -175,9 +194,8 @@ class image_processor:
         else: 
 		drive_to_publish = "Go"
 
-
-
         # Publish stop boolean to drive node
+        print(drive_to_publish)
         self.driver_pub.publish(drive_to_publish)
 
         # If just starting up from crosswalk, sleep to prevent double counting of crosswalk
@@ -206,81 +224,39 @@ class image_processor:
             resized_parking = cv2.resize(parking_image, dsize=(128, 128), interpolation=cv2.INTER_CUBIC)
             gray_parking = cv2.cvtColor(resized_parking, cv2.COLOR_BGR2GRAY) / 255.0
             blurred_gray_parking = cv2.blur(gray_parking, (9,9))
-            # _,  binary_parking = cv2.threshold(gray_parking, 50, 1, cv2.THRESH_BINARY)
 
 
             cropped.append(blurred_gray_parking)
 
-            #cv2.imshow("Parking Number", blurred_gray_parking)
-            # cv2.imshow("Black Parking", black_mask[pts[0][1] - int(delta / 2.4):pts[0][1] - 5, pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]])
-            # cv2.imshow("White Parking", white_mask[pts[0][1] - int(delta / 2.4):pts[0][1] - 5, pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]])
-
-            #time.sleep(2)
-
-            #black_count = np.sum(black_mask[pts[0][1] - int(delta / 2.4):pts[0][1] - 5, pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]])
-            #white_count = np.sum(white_mask[pts[0][1] - int(delta / 2.4):pts[0][1] - 5, pts[0][0] + int((-1*pts[0][0] + pts[3][0]) / 2):pts[3][0]])
-
-
-
-            license_characters = process_license(np.asarray(cropped))
-
+            license_characters, confidence = process_license(np.asarray(cropped))
 
             # #Format license characters and publish to ROS Master
             # #Example: 'TeamRed,multi21,4,XR58'
 
             plate_to_publish = self.teamID + ',' + self.password + ',' + license_characters
-            print(plate_to_publish)
-            
-            self.license_pub.publish(plate_to_publish) 
 
-            # centre1 = pts[0][0], pts[0][1]
-            # centre2 = pts[1][0], pts[1][1]
-            # centre3 = pts[2][0], pts[2][1]
-            # centre4 = pts[3][0], pts[3][1]
+            if self.license_collection[int(license_characters[0])-1][1] < confidence:
 
-            # cv2.circle(image, centre1, 5, (0, 20, 200), 2)
-            # cv2.circle(image, centre2, 5, (0, 20, 200), 2)
-            # cv2.circle(image, centre3, 5, (0, 20, 200), 2)
-            # cv2.circle(image, centre4, 5, (0, 20, 200), 2)
-            #cv2.imshow("Projection", projection)
-            #time.sleep(2)
+                # Need to throw an exception if there is a string where a character should be.
+                # print(license_characters[4])
+                # print(license_characters[5])
+                # int(license_characters[4])
+                # int(license_characters[5])
+
+                # print("Replacing:")
+                # #print(int(license_characters[-1])-1)
+                # print(self.license_collection[int(license_characters[-1])-1][0])
+                # print("With")
+                # print(plate_to_publish)
+                self.license_collection[int(license_characters[0])-1][0] = plate_to_publish
+                self.license_collection[int(license_characters[0])-1][1] = confidence
+
 
         #cv2.imshow("image", image)
         #cv2.imshow("Subtracted Mask", brown_mask - previous_brown_mask)
         cv2.waitKey(2)
 
         previous_brown_mask = brown_mask
-
-        # # Initial condition for previous_white_mask
-        # if (prev_mask_assigned == False): 
-        #     previous_white_mask = white_mask
-        #     prev_mask_assigned = True
-
-        # # Now need to determine environment state and provide instructrions to drive system
-
-        # # Determine response to enviroment
-        # shouldStop = determine_robot_response(red_mask, grey_mask, white_mask)
-
-        # if (shouldStop == True): drive_to_publish = "Stop"
-        # else: drive_to_publish = "Go"
-
-        # # Publish shouldStop boolean to drive node
-        # #self.driver_pub.publish(drive_to_publish)
-
-        # # Now look for license
-        # #found_plate, transformed_image = find_license(white_mask, blue_mask, image)
-        
-        # # If license is found, detect characters
-        # if found_plate == True: 
-        #     license_characters = process_license(transformed_image)
-
-        #     # Format license characters and publish to ROS Master
-        #     # Example: 'TeamRed,multi21,4,XR58'
-        #     plate_to_publish = self.teamID + ',' + self.password + ',' + license_plate_id + ',' + license_characters
-        #     self.license_pub.publish(plate_to_publish) 
-
-        # # Update white mask for next frame.
-        # previous_white_mask = white_mask
 
 # Filters image for red, white, grey, and blue.
 # Parameter: image - image you wish to mask. Pass in BGR format
@@ -510,9 +486,27 @@ def process_license(character_images):
 
     i = 0
     plate_as_chars = []
+    confidence = []
     while i < 5:
+        confidence.append(np.amax(predictions[i]))
         plate_as_chars.append(class_names[np.argmax(predictions[i])])
         i += 1
+    
+    # Remove array corresponding to confidence in parking number.
+    print(confidence)
+
+    min_confidence = np.amin(confidence)
+
+    # Find minimum confidence for plate characters
+    # j = 0
+
+    # while j < 4:
+    #     this_min = np.argmin(confidence[j])
+    #     if this_min < min_confidence:
+    #         min_confidence = this_min
+    #     j+= 1
+
+    print(min_confidence)
     
     # # Correct potential bad values
     # No Ts in second half of license plate. These are a 7.
@@ -577,7 +571,7 @@ def process_license(character_images):
         print('Made correction Z -> 2')
 
     # Return as single string describing license plate
-    return ''.join(plate_as_chars[0:4]) + ',' + plate_as_chars[-1]
+    return plate_as_chars[-1] + ',' + ''.join(plate_as_chars[0:4]), min_confidence
         
 # Orders points so that they can be interpreted by our image transform function.
 def order_points(pts):
